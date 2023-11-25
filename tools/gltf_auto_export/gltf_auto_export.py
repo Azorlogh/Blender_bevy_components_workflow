@@ -298,13 +298,16 @@ def generate_hollow_scene(scene, library_collections):
     #original_names = {}
     original_names = []
 
+    print("BEGINNING TO HOLLOW")
+    print(library_collections)
+
     # copies the contents of a collection into another one while replacing library instances with empties
     def copy_hollowed_collection_into(source_collection, destination_collection):
         for object in source_collection.objects:
             if object.instance_type == 'COLLECTION' and (object.instance_collection.name in library_collections):
                 collection_name = object.instance_collection.name
 
-                print("object location", object.location)
+                print("Hollowing object", collection_name, "at location", object.location)
                 original_name = object.name
                 original_names.append(original_name)
 
@@ -317,6 +320,7 @@ def generate_hollow_scene(scene, library_collections):
                 for k, v in object.items():
                     empty_obj[k] = v
             else:
+                print("linking directly: ", object.name)
                 destination_collection.objects.link(object)
 
         # for every sub-collection of the source, copy its content into a new sub-collection of the destination
@@ -446,12 +450,14 @@ def generate_gltf_export_preferences(addon_prefs):
 
 
 # get exportable collections from lists of mains scenes and lists of library scenes
-def get_exportable_collections(main_scenes, library_scenes): 
+def get_exportable_collections(main_scenes, library_scenes, library_collections): 
     all_collections = []
     for main_scene in main_scenes:
+        print("main scene! " + str(main_scene))
         (collection_names, _) = get_used_collections(main_scene)
-        all_collections = all_collections + list(collection_names)
+        all_collections = all_collections + list(filter(lambda x:x in library_collections, collection_names))
     for library_scene in library_scenes:
+        print("library scene! " + str(library_scene))
         marked_collections = get_marked_collections(library_scene)
         all_collections = all_collections + marked_collections[0]
     return all_collections
@@ -577,6 +583,14 @@ def export_main_scene(scene, folder_path, addon_prefs, library_collections):
     if export_blueprints : 
         clear_hollow_scene(hollow_scene, scene, object_names)
 
+def get_all_library_collections(library_scenes):
+    library_collections = []
+    for library_scene in library_scenes:
+        for collection in traverse_tree(library_scene.collection):
+            library_collections.append(collection.name)
+
+    return library_collections
+
 """Main function"""
 def auto_export(changes_per_scene, changed_export_parameters):
     addon_prefs = bpy.context.preferences.addons[__name__].preferences
@@ -619,9 +633,13 @@ def auto_export(changes_per_scene, changed_export_parameters):
 
         # export everything everytime
         if export_blueprints:
+
+            # list of all collections in the library scenes
+            library_collections = get_all_library_collections(library_scenes)
+
             print("EXPORTING")
             # get a list of all collections actually in use
-            collections = get_exportable_collections(level_scenes, library_scenes)
+            collections = get_exportable_collections(level_scenes, library_scenes, library_collections)
             # first check if all collections have already been exported before (if this is the first time the exporter is run
             # in your current Blender session for example)
             export_blueprints_path = os.path.join(folder_path, export_output_folder, getattr(addon_prefs,"export_blueprints_path")) if getattr(addon_prefs,"export_blueprints_path") != '' else folder_path
@@ -653,8 +671,6 @@ def auto_export(changes_per_scene, changed_export_parameters):
 
             collections_per_scene = get_collections_per_scene(collections_to_export, library_scenes)
 
-            # collections that do not come from a library should not be exported as seperate blueprints
-            library_collections = [name for sublist in collections_per_scene.values() for name in sublist]
             collections_to_export = list(set(collections_to_export).intersection(set(library_collections)))
 
             print("--------------")
@@ -675,7 +691,7 @@ def auto_export(changes_per_scene, changed_export_parameters):
                 do_export_main_scene =  changed_export_parameters or (scene_name in changes_per_scene.keys() and len(changes_per_scene[scene_name].keys()) > 0) or not check_if_level_on_disk(scene_name, export_levels_path, gltf_extension)
                 if do_export_main_scene:
                     print("     exporting scene:", scene_name)
-                    export_main_scene(bpy.data.scenes[scene_name], folder_path, addon_prefs, collections)
+                    export_main_scene(bpy.data.scenes[scene_name], folder_path, addon_prefs, library_collections)
 
 
             # now deal with blueprints/collections
@@ -1122,8 +1138,11 @@ class AutoExportGLTF(Operator, AutoExportGltfAddonPreferences, ExportHelper):
 
         addon_prefs = bpy.context.preferences.addons[__name__].preferences
 
-        [main_scene_names, level_scenes, library_scene_names, library_scenes]=get_scenes(addon_prefs)
-        collections = get_exportable_collections(level_scenes, library_scenes)
+        [main_scene_names, level_scenes, library_scene_names, library_scenes] = get_scenes(addon_prefs)
+
+        library_collections = get_all_library_collections(library_scenes)
+
+        collections = get_exportable_collections(level_scenes, library_scenes, library_collections)
 
         try:
             # we save this list of collections in the context
